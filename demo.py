@@ -9,7 +9,7 @@ from pose import extract_keypoints, save_keypoints_to_json, process_pose  # Impo
 
 EXPORTS_DIR = "detection/exports"
 os.makedirs(EXPORTS_DIR, exist_ok=True)
-
+     
 # Initialize MediaPipe Pose
 mp_drawing = mp.solutions.drawing_utils
 mp_pose = mp.solutions.pose
