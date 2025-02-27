@@ -2,6 +2,8 @@
 import json
 import enum
 import mediapipe as mp
+import cv2
+import numpy as np
 
 mp_pose = mp.solutions.pose
 
@@ -62,6 +64,11 @@ def save_keypoints_to_json(keypoints, filename):
     with open(filename, 'w') as f:
         json.dump(keypoints, f, indent=4)
 
+def save_summart_report_to_json(report, filename):
+    """Save the summary report to a JSON file."""
+    with open(filename, 'w') as f:
+        json.dump(report, f, indent=4)
+
 def process_pose(image):
     """Process the pose detection and return keypoints."""
     with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
@@ -70,3 +77,20 @@ def process_pose(image):
         results = pose.process(image_rgb)
         image_rgb.flags.writeable = True
         return results
+
+def console_log(img, msg):
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    fontScale = 0.5
+    org = (10, 30)  # Coordinates for the top-left corner
+    fontColor = (0, 255, 0)
+    backgroundColor = (0, 0, 255)  # Red background color
+    padding = 5
+    lineType = 2  # Thickness of the line
+
+    y = org[1]
+    for key, value in msg.items():
+        line = f"{key}: {value}"
+        cv2.putText(img, line, (org[0], y), font, fontScale, fontColor, lineType)
+        y += 20  # Adjust this value to control the spacing between lines
+
+    return img
