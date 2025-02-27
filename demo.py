@@ -11,6 +11,7 @@ from pose import (
     process_pose,
     save_summart_report_to_json,
     console_log,
+    draw_angles,
 )  # Import your new functions
 import shutil
 import psutil
@@ -125,6 +126,9 @@ def process_webcam():
                         color=(245, 66, 230), thickness=2, circle_radius=2
                     ),
                 )
+                
+                image = draw_angles(image, results)
+                
                 console_log(
                     image,
                     {
@@ -234,6 +238,8 @@ def process_video(video_path):
                 mp_drawing.draw_landmarks(
                     image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS
                 )
+                
+                image = draw_angles(image, results)
 
                 console_log(
                     image,
@@ -298,6 +304,7 @@ def process_image(image_path):
             mp_drawing.draw_landmarks(
                 image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS
             )
+            image = draw_angles(image, results)
 
         cv2.imshow("MediaPipe Pose - Image", image)
         cv2.waitKey(0)  # Press any key to close the window
