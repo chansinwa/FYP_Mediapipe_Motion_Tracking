@@ -43,6 +43,15 @@ class PoseLandmark(enum.IntEnum):
     LEFT_FOOT_INDEX = 31
     RIGHT_FOOT_INDEX = 32
     
+# Custom connections inspired by OpenPose's BODY_PARTS_KPT_IDS
+BODY_PARTS_CONNECTIONS = [
+    [0, 1], [0, 4], [1, 2], [2, 3], [4, 5], [5, 6], [3, 7], [6, 8], [9, 10],  # Head
+    [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24],     # Upper Body
+    [23, 24], [23, 25], [25, 27], [24, 26], [26, 28],                         # Lower Body
+    [15, 17], [15, 19], [15, 21], [16, 18], [16, 20], [16, 22],              # Hands
+    [27, 29], [29, 31], [28, 30], [30, 32]                                   # Feet
+]
+    
 def extract_keypoints(results, frame_id):
     """Extract keypoints from MediaPipe results."""
     keypoints = []
@@ -50,7 +59,7 @@ def extract_keypoints(results, frame_id):
         for index, landmark in enumerate(results.pose_landmarks.landmark):
             keypoints.append({
                 "frame_id": frame_id,
-                "keypoint_index": index,
+                "kpt_id": index,
                 "name": PoseLandmark(index).name,  # Use enum to get the name
                 'x': landmark.x,
                 'y': landmark.y,
@@ -94,3 +103,24 @@ def console_log(img, msg):
         y += 20  # Adjust this value to control the spacing between lines
 
     return img
+
+def draw_skeleton(img, ref_frame_kpts):
+    """Draw a semi-transparent grey skeleton based on keypoints."""
+    overlay = img.copy()
+    line_color = (128, 128, 128)  # Grey in BGR
+    line_thickness = 60
+    height, width = img.shape[:2]
+    keypoints_dict = {kpt["kpt_id"]: (int(kpt["x"] * width), int(kpt["y"] * height)) 
+                      for kpt in ref_frame_kpts if kpt["visibility"] > 0.5}
+
+    for connection in BODY_PARTS_CONNECTIONS:
+        idx1, idx2 = connection
+        if idx1 in keypoints_dict and idx2 in keypoints_dict:
+            pt1 = keypoints_dict[idx1]
+            pt2 = keypoints_dict[idx2]
+            cv2.line(overlay, pt1, pt2, line_color, line_thickness)
+    
+    alpha = 0.5
+    cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
+    return img
+    

@@ -11,6 +11,7 @@ from pose import (
     process_pose,
     save_summart_report_to_json,
     console_log,
+    draw_skeleton,
 )  # Import your new functions
 import shutil
 import psutil
@@ -58,8 +59,14 @@ def process_webcam():
     summary_report = []
     frame_id = 0
     fps_time = 0
+    
+    ref_list = []
+    ref_keypoints = []
 
     start_time = time.time()
+    ## Load the JSON data from the file
+    with open("detection/tracking_frame_report_video-2.json", "r") as file:
+        ref_list = json.load(file)
     print("Start processing...")
 
     with mp_pose.Pose(
@@ -125,8 +132,17 @@ def process_webcam():
                         color=(245, 66, 230), thickness=2, circle_radius=2
                     ),
                 )
+                
+                ## Draw the skeleton
+                if frame_id < len(ref_list):
+                    ref_keypoints = ref_list[frame_id]["keypoints"]
+                else:
+                    ref_keypoints = ref_list[frame_id % len(ref_list)]["keypoints"]
+                    
+                img_with_skeleton = draw_skeleton(image, ref_keypoints)
+                
                 console_log(
-                    image,
+                    img_with_skeleton,
                     {
                         "filename": "webcam",
                         "frame_id": frame_id,
@@ -137,7 +153,7 @@ def process_webcam():
                     },
                 )
 
-            cv2.imshow("MediaPipe Pose - Webcam", image)
+            cv2.imshow("MediaPipe Pose - Webcam", img_with_skeleton)
             if cv2.waitKey(5) & 0xFF == 27:  # Press 'Esc' to exit
                 break
 
