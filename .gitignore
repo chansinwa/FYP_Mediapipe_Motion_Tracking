@@ -4,6 +4,7 @@ detection/exports/
 *.DS_Store
 *.pkl
 coco/
+dataset/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

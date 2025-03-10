@@ -53,7 +53,7 @@ def generate_filename(base_name):
 
 def process_webcam():
     """Process webcam video feed."""
-    # Start capturing video
+    # Start webcam with id 0 or 1 or 2
     cap = cv2.VideoCapture(0)
     tracking_frame_report = []
     summary_report = []
@@ -99,13 +99,6 @@ def process_webcam():
             ## Access the CPU usage
             current_cpu_load = psutil.cpu_percent()
 
-            # # Extract landmarks
-            # try:
-            #     landmarks = results.pose_landmarks.landmark
-            #     # print(landmarks)
-            # except:
-            #     pass
-
             # Extract landmarks
             keypoints = extract_keypoints(results, frame_id)
             tracking_frame_report.append(
@@ -119,6 +112,8 @@ def process_webcam():
                 }
             )  # Store the object
 
+            # Default to the original image
+            img_with_skeleton = image.copy()
             # Render detections
             if results.pose_landmarks:
                 mp_drawing.draw_landmarks(
@@ -153,9 +148,9 @@ def process_webcam():
                     },
                 )
 
-            cv2.imshow("MediaPipe Pose - Webcam", img_with_skeleton)
-            if cv2.waitKey(5) & 0xFF == 27:  # Press 'Esc' to exit
-                break
+                cv2.imshow("MediaPipe Pose - Webcam", img_with_skeleton)
+                if cv2.waitKey(5) & 0xFF == 27:  # Press 'Esc' to exit
+                    break
 
             frame_id += 1
             fps_time = time.time()
@@ -187,7 +182,6 @@ def process_webcam():
 
     cap.release()
     cv2.destroyAllWindows()
-
 
 def process_video(video_path):
     """Process video file."""
