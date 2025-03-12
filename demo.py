@@ -16,6 +16,7 @@ from pose import (
 import shutil
 import psutil
 import time
+from collections import deque
 
 EXPORTS_DIR = "detection/exports"
 os.makedirs(EXPORTS_DIR, exist_ok=True)
@@ -51,6 +52,185 @@ def generate_filename(base_name):
     return export_path
 
 
+def extract_video_window(video_path, window_size, start_frame=0):
+    """Extract keypoints for a window of video frames."""
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"Error: Could not open video file '{video_path}'")
+        return None
+
+    keypoints_window = deque(maxlen=window_size)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
+    with mp_pose.Pose(
+        min_detection_confidence=0.5, min_tracking_confidence=0.5
+    ) as pose:
+        for frame_id in range(start_frame, start_frame + window_size):
+            success, frame = cap.read()
+            if not success:
+                break
+            image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            image_rgb.flags.writeable = False
+            results = pose.process(image_rgb)
+            keypoints = extract_keypoints(results, frame_id)
+            keypoints_window.append(keypoints)
+
+    cap.release()
+    return keypoints_window
+
+
+def process_sliding_window(video_path, window_size=20, camera_id=0):
+    """Process webcam and video with a sliding window for keypoint comparison."""
+    # Webcam setup
+    webcam_cap = cv2.VideoCapture(camera_id)
+    if not webcam_cap.isOpened():
+        print(f"Error: Could not open webcam with ID {camera_id}")
+        return
+
+    # Video window setup
+    video_cap = cv2.VideoCapture(video_path)
+    if not video_cap.isOpened():
+        print(f"Error: Could not open video file '{video_path}'")
+        webcam_cap.release()
+        return
+
+    # Initial video window
+    keypoints_window = extract_video_window(video_path, window_size)
+    if not keypoints_window or len(keypoints_window) < window_size:
+        print(
+            f"Warning: Video has fewer than {window_size} frames or failed to process"
+        )
+        video_cap.release()
+        webcam_cap.release()
+        return
+
+    tracking_frame_report = []
+    frame_id = 0
+    fps_time = 0
+    video_frame_id = 0
+    start_time = time.time()
+    print(f"Starting sliding window comparison with video: {video_path}")
+
+    with mp_pose.Pose(
+        min_detection_confidence=0.5, min_tracking_confidence=0.5
+    ) as pose:
+        while webcam_cap.isOpened():
+            success, webcam_frame = webcam_cap.read()
+            if not success:
+                print("Ignoring empty webcam frame.")
+                continue
+
+            # Process webcam frame
+            image = cv2.cvtColor(webcam_frame, cv2.COLOR_BGR2RGB)
+            image.flags.writeable = False
+            results = pose.process(image)
+            image.flags.writeable = True
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+            # Extract webcam keypoints
+            webcam_keypoints = extract_keypoints(results, frame_id)
+
+            # Get resolution and performance metrics
+            frame_width = int(webcam_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            frame_height = int(webcam_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            resolution = [frame_width, frame_height]
+            current_time = time.time()
+            fps = round(1.0 / (current_time - fps_time), 2) if frame_id > 0 else 0
+            current_cpu_load = psutil.cpu_percent()
+
+            # Store webcam tracking data
+            tracking_frame_report.append(
+                {
+                    "filename": "webcam",
+                    "frame_id": frame_id,
+                    "fps": fps,
+                    "cpu_load": current_cpu_load,
+                    "resolution": resolution,
+                    "keypoints": webcam_keypoints,
+                }
+            )
+
+            # Get video keypoints from window
+            if frame_id < len(keypoints_window):
+                ref_keypoints = keypoints_window[frame_id]
+            else:
+                # Slide the window: process the next video frame
+                video_frame_id += 1
+                success, video_frame = video_cap.read()
+                if success:
+                    video_rgb = cv2.cvtColor(video_frame, cv2.COLOR_BGR2RGB)
+                    video_rgb.flags.writeable = False
+                    video_results = pose.process(video_rgb)
+                    video_rgb.flags.writeable = True
+                    ref_keypoints = extract_keypoints(video_results, video_frame_id)
+                    keypoints_window.append(ref_keypoints)
+                else:
+                    print("End of video reached.")
+                    break
+
+            # Visualize
+            img_with_skeleton = image.copy()
+            if results.pose_landmarks:
+                mp_drawing.draw_landmarks(
+                    image,
+                    results.pose_landmarks,
+                    mp_pose.POSE_CONNECTIONS,
+                    mp_drawing.DrawingSpec(
+                        color=(245, 117, 66), thickness=2, circle_radius=2
+                    ),
+                    mp_drawing.DrawingSpec(
+                        color=(245, 66, 230), thickness=2, circle_radius=2
+                    ),
+                )
+                img_with_skeleton = draw_skeleton(image, ref_keypoints)
+
+            console_log(
+                img_with_skeleton,
+                {
+                    "filename": "webcam_vs_video",
+                    "frame_id": frame_id,
+                    "video_frame_id": video_frame_id,
+                    "resolution": resolution,
+                    "frame_time": current_time,
+                    "fps": fps,
+                    "cpu_load": current_cpu_load,
+                },
+            )
+
+            cv2.imshow("Sliding Window Pose Comparison", img_with_skeleton)
+            if cv2.waitKey(5) & 0xFF == 27:  # Press 'Esc' to exit
+                break
+
+            frame_id += 1
+            fps_time = current_time
+
+    total_time = time.time() - start_time
+    print(f"Total processing time: {total_time:.2f} seconds")
+
+    # Save results
+    file_path = generate_filename("sliding_window")
+    save_keypoints_to_json(
+        tracking_frame_report, f"{file_path}/tracking_frame_report.json"
+    )
+    avg_fps = sum([frame["fps"] for frame in tracking_frame_report]) / len(
+        tracking_frame_report
+    )
+    avg_cpu_load = sum([frame["cpu_load"] for frame in tracking_frame_report]) / len(
+        tracking_frame_report
+    )
+    summary_report = {
+        "total_frames": frame_id,
+        "total_time": total_time,
+        "avg_fps": avg_fps,
+        "avg_cpu_load": avg_cpu_load,
+    }
+    save_summart_report_to_json(summary_report, f"{file_path}/summary_report.json")
+
+    video_cap.release()
+    webcam_cap.release()
+    cv2.destroyAllWindows()
+
+
 def process_webcam():
     """Process webcam video feed."""
     # Start webcam with id 0 or 1 or 2
@@ -59,7 +239,7 @@ def process_webcam():
     summary_report = []
     frame_id = 0
     fps_time = 0
-    
+
     ref_list = []
     ref_keypoints = []
 
@@ -127,15 +307,15 @@ def process_webcam():
                         color=(245, 66, 230), thickness=2, circle_radius=2
                     ),
                 )
-                
+
                 ## Draw the skeleton
                 if frame_id < len(ref_list):
                     ref_keypoints = ref_list[frame_id]["keypoints"]
                 else:
                     ref_keypoints = ref_list[frame_id % len(ref_list)]["keypoints"]
-                    
+
                 img_with_skeleton = draw_skeleton(image, ref_keypoints)
-                
+
                 console_log(
                     img_with_skeleton,
                     {
@@ -182,6 +362,7 @@ def process_webcam():
 
     cap.release()
     cv2.destroyAllWindows()
+
 
 def process_video(video_path):
     """Process video file."""
@@ -324,10 +505,31 @@ if __name__ == "__main__":
         help="Path to video file or camera id (0 for webcam)",
     )
     parser.add_argument("--image", type=str, default="", help="Path to image file")
+    parser.add_argument(
+        "--sliding",
+        action="store_true",
+        help="Use sliding window comparison with video",
+    )
+    parser.add_argument(
+        "--window-size",
+        type=int,
+        default=20,
+        help="Size of the sliding window (default: 20)",
+    )
+    parser.add_argument(
+        "--camera-id",
+        type=int,
+        default=0,
+        help="Webcam ID for sliding window (default: 0)",
+    )
 
     args = parser.parse_args()
 
-    if args.video:
+    if args.sliding and args.video:
+        process_sliding_window(
+            args.video, window_size=args.window_size, camera_id=args.camera_id
+        )
+    elif args.video:
         process_video(args.video)
     elif args.image:
         process_image(args.image)
