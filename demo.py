@@ -231,10 +231,10 @@ def process_sliding_window(video_path, window_size=20, camera_id=0):
     cv2.destroyAllWindows()
 
 
-def process_webcam():
+def process_webcam(camera_id = 0):
     """Process webcam video feed."""
     # Start webcam with id 0 or 1 or 2
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(camera_id)
     tracking_frame_report = []
     summary_report = []
     frame_id = 0
@@ -534,4 +534,4 @@ if __name__ == "__main__":
     elif args.image:
         process_image(args.image)
     else:
-        process_webcam()
+        process_webcam(args.camera_id)

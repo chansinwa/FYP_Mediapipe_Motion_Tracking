@@ -52,6 +52,8 @@ def extract_video_window(video_path, window_size, start_frame=0):
     frame_window = deque(maxlen=window_size)
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
+    # print(f"Extracting video window from frame {start_frame} to {start_frame + window_size}")
+
     with mp_pose.Pose(
         min_detection_confidence=0.5, min_tracking_confidence=0.5
     ) as pose:
@@ -72,7 +74,7 @@ def extract_video_window(video_path, window_size, start_frame=0):
     return keypoints_window, frame_window
 
 
-def process_sliding_window_side_by_side(video_path, window_size=20, camera_id=1):
+def process_sliding_window_side_by_side(video_path, window_size=5, camera_id=1):
     """Process video and webcam side-by-side with a sliding window."""
     # Webcam setup
     webcam_cap = cv2.VideoCapture(camera_id)
@@ -101,6 +103,7 @@ def process_sliding_window_side_by_side(video_path, window_size=20, camera_id=1)
     frame_id = 0
     fps_time = 0
     video_frame_id = window_size - 1  # Start at the last frame of the initial window
+    file_path = generate_filename("sliding_window_side_by_side")
     start_time = time.time()
     print(f"Starting side-by-side sliding window comparison with video: {video_path}")
 
@@ -184,6 +187,19 @@ def process_sliding_window_side_by_side(video_path, window_size=20, camera_id=1)
                         color=(245, 66, 230), thickness=2, circle_radius=2
                     ),
                 )
+            
+            console_log(
+                video_frame,
+                {
+                    "filename": "webcam_vs_video",
+                    "frame_id": frame_id,
+                    "video_frame_id": video_frame_id,
+                    "resolution": resolution,
+                    "frame_time": current_time,
+                    "fps": fps,
+                    "cpu_load": current_cpu_load,
+                },
+            )
 
             # Visualize webcam frame (right side) with video skeleton overlay
             webcam_with_skeleton = webcam_frame.copy()
@@ -202,18 +218,13 @@ def process_sliding_window_side_by_side(video_path, window_size=20, camera_id=1)
                 webcam_with_skeleton = draw_skeleton(
                     webcam_with_skeleton, video_keypoints
                 )
-
-            # Resize frames to match heights and stack horizontally
-            video_frame_resized = cv2.resize(video_frame, (frame_width, frame_height))
-            combined_frame = np.hstack((video_frame_resized, webcam_with_skeleton))
-
-            # Add console log to combined frame
+            
             console_log(
-                combined_frame,
+                webcam_with_skeleton,
                 {
                     "filename": "webcam_vs_video",
                     "frame_id": frame_id,
-                    "video_frame_id": video_frame_id,
+                    "webcam_frame_id": frame_id,
                     "resolution": resolution,
                     "frame_time": current_time,
                     "fps": fps,
@@ -221,9 +232,15 @@ def process_sliding_window_side_by_side(video_path, window_size=20, camera_id=1)
                 },
             )
 
+            # Resize frames to match heights and stack horizontally
+            video_frame_resized = cv2.resize(video_frame, (frame_width, frame_height))
+            combined_frame = np.hstack((video_frame_resized, webcam_with_skeleton))
+
             cv2.imshow(
                 "Exercise Tutorial (Left) vs User Tracking (Right)", combined_frame
             )
+            cv2.imwrite(f"{file_path}frame_{frame_id}.jpg", combined_frame)
+
             if cv2.waitKey(5) & 0xFF == 27:  # Press 'Esc' to exit
                 break
 
@@ -234,7 +251,6 @@ def process_sliding_window_side_by_side(video_path, window_size=20, camera_id=1)
     print(f"Total processing time: {total_time:.2f} seconds")
 
     # Save results
-    file_path = generate_filename("sliding_window_side_by_side")
     save_keypoints_to_json(
         tracking_frame_report, f"{file_path}/tracking_frame_report.json"
     )
@@ -275,7 +291,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--camera-id",
         type=int,
-        default=0,
+        default=1,
         help="Webcam ID for sliding window (default: 0)",
     )
 
