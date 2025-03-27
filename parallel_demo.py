@@ -239,7 +239,7 @@ def process_sliding_window_side_by_side(video_path, window_size=5, camera_id=1):
             cv2.imshow(
                 "Exercise Tutorial (Left) vs User Tracking (Right)", combined_frame
             )
-            cv2.imwrite(f"{file_path}frame_{frame_id}.jpg", combined_frame)
+            # cv2.imwrite(f"{file_path}frame_{frame_id}.jpg", combined_frame)
 
             if cv2.waitKey(5) & 0xFF == 27:  # Press 'Esc' to exit
                 break
@@ -265,6 +265,8 @@ def process_sliding_window_side_by_side(video_path, window_size=5, camera_id=1):
         "total_time": total_time,
         "avg_fps": avg_fps,
         "avg_cpu_load": avg_cpu_load,
+        "video_path": video_path,
+        "window_size": window_size,
     }
     save_summart_report_to_json(summary_report, f"{file_path}/summary_report.json")
 
@@ -292,7 +294,7 @@ if __name__ == "__main__":
         "--camera-id",
         type=int,
         default=1,
-        help="Webcam ID for sliding window (default: 0)",
+        help="Webcam ID for sliding window (default: 1)",
     )
 
     args = parser.parse_args()
