@@ -64,12 +64,204 @@ def run_video_tracking():
 def run_realtime_tracking():
     print("demo run_realtime_tracking...")
     # run_pose_init()
+    # process_webcam(file_path)
 
-    process_webcam()
+    if not run_pose_init(file_path, base_name):
+        print("Pose initialization failed. Aborting webcam processing.")
+        return
 
+    process_webcam(file_path)
 
-def run_pose_init():
+def run_pose_init(file_path, base_name):
     print("demo run_pose_init...")
+    global pose_model
+    pose_model = mp_pose.Pose(
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+        model_complexity=1,
+        smooth_landmarks=True,
+    )
+    cap = cv2.VideoCapture(1)  # Match process_webcam camera_id
+    if not cap.isOpened():
+        print("Error: Cannot access webcam.")
+        return False
+
+    with open(f"{file_path}/tracking_frame_report.json", "r") as file:
+        ref_list = json.load(file)
+    if not ref_list:
+        print("Error: Reference JSON is empty.")
+        cap.release()
+        return False
+    init_keypoints = ref_list[0]["keypoints"]  # First frame's keypoints
+
+    pose_init_duration = 20  # 20 seconds
+    keypoint_threshold = 0.05  # Normalized distance threshold
+    init_time = time.time()
+    continue_init = True
+    frame_id = 0
+    fps_time = time.time()
+
+    with mp_pose.Pose(
+            min_detection_confidence=0.5, min_tracking_confidence=0.5
+        ) as pose:
+        while continue_init:
+            success, frame = cap.read()
+            if not success:
+                print("Ignoring empty camera frame.")
+                continue
+
+            image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            image.flags.writeable = False
+            results = pose.process(image)
+            image.flags.writeable = True
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+            frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            resolution = [frame_width, frame_height]
+
+            current_time = time.time()
+            fps = round(1.0 / (current_time - fps_time), 2)
+            fps_time = current_time
+
+            webcam_keypoints = extract_keypoints(results, frame_id)
+            img_with_skeleton = image.copy()
+
+            all_keypoints_matched = False
+            if results.pose_landmarks:
+                mp_drawing.draw_landmarks(
+                    img_with_skeleton,
+                    results.pose_landmarks,
+                    mp_pose.POSE_CONNECTIONS,
+                    mp_drawing.DrawingSpec(color=(245, 117, 66), thickness=2, circle_radius=2),
+                    mp_drawing.DrawingSpec(color=(245, 66, 230), thickness=2, circle_radius=2),
+                )
+
+                bbox = results.pose_landmarks.landmark
+                x_min = min([lm.x for lm in bbox]) * frame_width
+                y_min = min([lm.y for lm in bbox]) * frame_height
+                x_max = max([lm.x for lm in bbox]) * frame_width
+                y_max = max([lm.y for lm in bbox]) * frame_height
+                cv2.rectangle(
+                    img_with_skeleton,
+                    (int(x_min), int(y_min)),
+                    (int(x_max), int(y_max)),
+                    (0, 255, 0),
+                    2,
+                )
+
+                img_with_skeleton = draw_angles(img_with_skeleton, webcam_keypoints, frame_width, frame_height)
+                img_with_skeleton = draw_skeleton(img_with_skeleton, init_keypoints, webcam_keypoints)
+
+                matched_count = 0
+                total_keypoints = len(init_keypoints)
+                for ref_kpt, web_kpt in zip(init_keypoints, webcam_keypoints):
+                    if "abs_distance" in ref_kpt and ref_kpt["abs_distance"] < keypoint_threshold:
+                        matched_count += 1
+                all_keypoints_matched = matched_count == total_keypoints
+
+            elapsed_time = current_time - init_time
+            countdown = max(0, pose_init_duration - int(elapsed_time))
+            cv2.putText(
+                img_with_skeleton,
+                f"Pose Init: {countdown}s",
+                (30, 150),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                2,
+                (255, 255, 255),
+                5,
+            )
+            
+            # status_text = "Match!" if all_keypoints_matched else "Align pose"
+            # status_color = (0, 255, 0) if all_keypoints_matched else (0, 0, 255)
+            # cv2.putText(
+            #     img_with_skeleton,
+            #     status_text,
+            #     (50, 50),
+            #     cv2.FONT_HERSHEY_SIMPLEX,
+            #     1,
+            #     status_color,
+            #     2,
+            # )
+
+            # console_log(
+            #     img_with_skeleton,
+            #     {
+            #         "filename": "webcam",
+            #         "frame_id": frame_id,
+            #         "resolution": resolution,
+            #         "frame_time": current_time,
+            #         "fps": fps,
+            #         "cpu_load": psutil.cpu_percent(),
+            #         "ref_video": base_name,
+            #     },
+            # )
+
+            cv2.imshow("Pose Init", img_with_skeleton)
+
+            key = cv2.waitKey(1)
+            if key == 27 or all_keypoints_matched:  # Esc or all keypoints matched
+                cv2.destroyAllWindows()
+                cap.release()
+                return True
+
+            if elapsed_time >= pose_init_duration and not all_keypoints_matched:
+                cv2.destroyAllWindows()
+                def create_modal():
+                    modal = customtkinter.CTkToplevel()
+                    modal.geometry("400x200")
+                    modal.title("Pose Initialization Timeout")
+                    modal.attributes('-topmost', True)
+
+                    label = customtkinter.CTkLabel(
+                        modal,
+                        text="Do you want to try again or start the exercise?",
+                        font=("Arial", 14),
+                    )
+                    label.pack(pady=20)
+
+                    def continue_pose_init():
+                        nonlocal continue_init, init_time
+                        continue_init = True
+                        init_time = time.time()
+                        modal.destroy()
+
+                    def start_tracking():
+                        nonlocal continue_init
+                        continue_init = False
+                        modal.destroy()
+
+                    btn_continue = customtkinter.CTkButton(
+                        modal,
+                        text="Retry",
+                        width=150,
+                        command=continue_pose_init,
+                    )
+                    btn_continue.pack(side="left", padx=20, pady=10)
+
+                    btn_start = customtkinter.CTkButton(
+                        modal,
+                        text="Start Exercise",
+                        width=150,
+                        command=start_tracking,
+                    )
+                    btn_start.pack(side="right", padx=20, pady=10)
+
+                    modal.grab_set()
+                    modal.wait_window()
+
+                create_modal()
+                if continue_init:
+                    cv2.imshow("Pose Init", img_with_skeleton)
+                else:
+                    cv2.destroyAllWindows()
+                    cap.release()
+                    return True
+
+            frame_id += 1
+
+        cap.release()
+        return False
 
 
 def generate_filename(base_name):
@@ -98,7 +290,7 @@ def generate_filename(base_name):
     return export_path
 
 
-def process_webcam(camera_id=0):
+def process_webcam(file_path = None, camera_id=1):
     """Process webcam video feed."""
     # Start webcam with id 0 or 1 or 2
     cap = cv2.VideoCapture(camera_id)
@@ -113,8 +305,16 @@ def process_webcam(camera_id=0):
 
     start_time = time.time()
     ## Load the JSON data from the file
-    with open("detection/tracking_frame_report_video-6.json", "r") as file:
+    # base_name = os.path.splitext(os.path.basename(selected_video_path))[
+    #     0
+    # ]  # Get the base name of the video file
+    
+    with open(f"{file_path}tracking_frame_report.json", "r") as file:
         ref_list = json.load(file)
+    
+    # with open("detection/tracking_frame_report_video-2.json", "r") as file:
+    #     ref_list = json.load(file)
+    
     print("Start processing...")
 
     with mp_pose.Pose(
@@ -125,6 +325,10 @@ def process_webcam(camera_id=0):
             if not success:
                 print("Ignoring empty camera frame.")
                 continue
+            
+            if frame_id > ref_list[-1]["frame_id"]:
+                print("End of reference video.")
+                break
 
             # Recolor the image
             image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -219,6 +423,7 @@ def process_webcam(camera_id=0):
                         "frame_time": current_time,
                         "fps": fps,
                         "cpu_load": current_cpu_load,
+                        "ref_video": ref_list[0]["filename"]
                     },
                 )
 
@@ -233,7 +438,7 @@ def process_webcam(camera_id=0):
     print(f"Total processing time: {total_time:.2f} seconds")
 
     # Save keypoints to JSON file before exiting
-    file_path = generate_filename("webcam")
+    file_path = generate_filename("webcam_" + ref_list[0]["filename"])
     save_keypoints_to_json(
         tracking_frame_report, f"{file_path}/tracking_frame_report.json"
     )
@@ -253,6 +458,7 @@ def process_webcam(camera_id=0):
         "total_time": total_time,
         "avg_fps": avg_fps,
         "avg_cpu_load": avg_cpu_load,
+        "ref_video": ref_list[0]["filename"]
     }
 
     save_summart_report_to_json(summary_report, f"{file_path}/summary_report.json")
@@ -263,6 +469,7 @@ def process_webcam(camera_id=0):
 
 def process_video(video_path):
     """Process video file."""
+    global file_path, base_name
     cap = cv2.VideoCapture(video_path)
     keypoints_list = []
     base_name = os.path.splitext(os.path.basename(video_path))[
@@ -413,6 +620,12 @@ if __name__ == "__main__":
         type=int,
         default=0,
         help="Webcam ID for sliding window (default: 0)",
+    )
+    parser.add_argument(
+        "--reference-video-json",
+        type=str,
+        default="detection/temp_report/tracking_frame_report_video-1.json",
+        help="reference video JSON tracking report for realtime tracking (default: detection/temp_report/tracking_frame_report_video-2.json)",
     )
 
     args = parser.parse_args()

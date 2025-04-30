@@ -103,7 +103,7 @@ def process_sliding_window_side_by_side(video_path, window_size=5, camera_id=1):
     frame_id = 0
     fps_time = 0
     video_frame_id = window_size - 1  # Start at the last frame of the initial window
-    file_path = generate_filename("sliding_window_side_by_side")
+    file_path = generate_filename("sliding_window_" + (video_path.split("/")[-1])[:-4])
     start_time = time.time()
     print(f"Starting side-by-side sliding window comparison with video: {video_path}")
 

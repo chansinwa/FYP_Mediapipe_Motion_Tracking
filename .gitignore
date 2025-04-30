@@ -1,6 +1,7 @@
 # Custom ignore
 *.pth
 detection/exports/
+detection/videos/
 *.DS_Store
 *.pkl
 coco/
