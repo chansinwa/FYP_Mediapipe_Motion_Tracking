@@ -503,6 +503,8 @@ def process_video(video_path):
             frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             resolution = [frame_width, frame_height]
+            
+            
 
             ## Calculate the fps
             current_time = time.time()
@@ -541,6 +543,23 @@ def process_video(video_path):
                         "cpu_load": current_cpu_load,
                     },
                 )
+                
+                # Draw bounding box (migrated from Lightweight OpenPose)
+                bbox = results.pose_landmarks.landmark
+                x_min = min([lm.x for lm in bbox]) * frame_width
+                y_min = min([lm.y for lm in bbox]) * frame_height
+                x_max = max([lm.x for lm in bbox]) * frame_width
+                y_max = max([lm.y for lm in bbox]) * frame_height
+                cv2.rectangle(
+                    image,
+                    (int(x_min), int(y_min)),
+                    (int(x_max), int(y_max)),
+                    (0, 255, 0),
+                    2,
+                )
+                
+                # Draw angles on webcam keypoints
+                image = draw_angles(image, keypoints, frame_width, frame_height)
 
             cv2.imshow("MediaPipe Pose - Video", image)
             if cv2.waitKey(5) & 0xFF == 27:  # Press 'Esc' to exit

@@ -232,7 +232,7 @@ def draw_skeleton(img, ref_frame_kpts, webcam_kpts_list=None):
         cv2.rectangle(
             img,
             (10, y_start - 10),
-            (x_start + 250, img.shape[0] - 10),
+            (x_start + 260, img.shape[0]),
             (255, 255, 255),
             -1,
         )
@@ -405,10 +405,12 @@ def draw_angles(img, keypoints, width, height):
     # Calculate angles
     r_arm_angle = calculate_angle(RShoulder, RElbow, RWrist)
     l_arm_angle = calculate_angle(LShoulder, LElbow, LWrist)
-    r_shoulder_angle = calculate_angle(Neck, RShoulder, RElbow)
-    l_shoulder_angle = calculate_angle(Neck, LShoulder, LElbow)
-    r_hip_angle = calculate_angle(Neck, RHip, RAnkle)
-    l_hip_angle = calculate_angle(Neck, LHip, LAnkle)
+    r_shoulder_angle = calculate_angle(LShoulder, RShoulder, RElbow)
+    l_shoulder_angle = calculate_angle(RShoulder, LShoulder, LElbow)
+    r_hip_angle = calculate_angle(RShoulder, RHip, RKnee)
+    l_hip_angle = calculate_angle(LShoulder, LHip, LKnee)
+    l_knee_angle = calculate_angle(LHip, LKnee, LAnkle)
+    r_knee_angle = calculate_angle(RHip, RKnee, RAnkle)
 
     # Calculate font scales based on distances
     font_scale_r_arm = min(max(calculate_distance(RElbow, RWrist) / 100, 0.5), 0.5) if RElbow and RWrist else 0.5
@@ -435,12 +437,20 @@ def draw_angles(img, keypoints, width, height):
         draw_interior_sector(img, LShoulder, RShoulder, LElbow, "left")
         draw_text_with_outline(img, f"{l_shoulder_angle:.1f}", LShoulder, font_scale_l_shoulder, 1)
 
-    if is_valid_point(RKnee) and is_valid_point(RHip) and is_valid_point(RAnkle) and r_hip_angle:
-        draw_interior_sector(img, RHip, RKnee, RAnkle, "right")
-        draw_text_with_outline(img, f"{r_hip_angle:.1f}", RHip, font_scale_r_hip, 1)
+    if is_valid_point(RKnee) and is_valid_point(RHip) and is_valid_point(RAnkle) and r_knee_angle:
+        draw_interior_sector(img, RKnee, RHip, RAnkle, "right")
+        draw_text_with_outline(img, f"{r_knee_angle:.1f}", RKnee, font_scale_r_hip, 1)
 
-    if is_valid_point(LKnee) and is_valid_point(LHip) and is_valid_point(LAnkle) and l_hip_angle:
-        draw_interior_sector(img, LHip, LKnee, LAnkle, "left")
+    if is_valid_point(LKnee) and is_valid_point(LHip) and is_valid_point(LAnkle) and l_knee_angle:
+        draw_interior_sector(img, LKnee, LHip, LAnkle, "left")
+        draw_text_with_outline(img, f"{l_knee_angle:.1f}", LKnee, font_scale_l_hip, 1)
+        
+    if is_valid_point(RHip) and is_valid_point(RKnee) and is_valid_point(RShoulder) and r_hip_angle:
+        draw_interior_sector(img, RHip, RShoulder, RKnee, "right")
+        draw_text_with_outline(img, f"{r_hip_angle:.1f}", RHip, font_scale_r_hip, 1)
+        
+    if is_valid_point(LHip) and is_valid_point(LKnee) and is_valid_point(LShoulder) and l_hip_angle:
+        draw_interior_sector(img, LHip, LShoulder, LKnee, "left")
         draw_text_with_outline(img, f"{l_hip_angle:.1f}", LHip, font_scale_l_hip, 1)
 
     return img
