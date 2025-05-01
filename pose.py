@@ -1,4 +1,3 @@
-# pose.py
 import json
 import enum
 import mediapipe as mp
@@ -7,10 +6,8 @@ import numpy as np
 
 mp_pose = mp.solutions.pose
 
-
 class PoseLandmark(enum.IntEnum):
     """The 33 pose landmarks."""
-
     NOSE = 0
     LEFT_EYE_INNER = 1
     LEFT_EYE = 2
@@ -45,8 +42,6 @@ class PoseLandmark(enum.IntEnum):
     LEFT_FOOT_INDEX = 31
     RIGHT_FOOT_INDEX = 32
 
-
-# Custom connections inspired by OpenPose's BODY_PARTS_KPT_IDS
 BODY_PARTS_CONNECTIONS = [
     [0, 1],
     [0, 4],
@@ -56,31 +51,30 @@ BODY_PARTS_CONNECTIONS = [
     [5, 6],
     [3, 7],
     [6, 8],
-    [9, 10],  # Head
+    [9, 10],
     [11, 12],
     [11, 13],
     [13, 15],
     [12, 14],
     [14, 16],
     [11, 23],
-    [12, 24],  # Upper Body
+    [12, 24],
     [23, 24],
     [23, 25],
     [25, 27],
     [24, 26],
-    [26, 28],  # Lower Body
+    [26, 28],
     [15, 17],
     [15, 19],
     [15, 21],
     [16, 18],
     [16, 20],
-    [16, 22],  # Hands
+    [16, 22],
     [27, 29],
     [29, 31],
     [28, 30],
-    [30, 32],  # Feet
+    [30, 32],
 ]
-
 
 def extract_keypoints(results, frame_id):
     """Extract keypoints from MediaPipe results."""
@@ -91,7 +85,7 @@ def extract_keypoints(results, frame_id):
                 {
                     "frame_id": frame_id,
                     "kpt_id": index,
-                    "name": PoseLandmark(index).name,  # Use enum to get the name
+                    "name": PoseLandmark(index).name,
                     "x": landmark.x,
                     "y": landmark.y,
                     "z": landmark.z,
@@ -100,18 +94,15 @@ def extract_keypoints(results, frame_id):
             )
     return keypoints
 
-
 def save_keypoints_to_json(keypoints, filename):
     """Save keypoints to a JSON file."""
     with open(filename, "w") as f:
         json.dump(keypoints, f, indent=4)
 
-
 def save_summart_report_to_json(report, filename):
     """Save the summary report to a JSON file."""
     with open(filename, "w") as f:
         json.dump(report, f, indent=4)
-
 
 def process_pose(image):
     """Process the pose detection and return keypoints."""
@@ -124,34 +115,42 @@ def process_pose(image):
         image_rgb.flags.writeable = True
         return results
 
-
-def console_log(img, msg):
+def console_log(img, msg, additional_text=None):
+    """Render console messages on the image with optional additional text below."""
     font = cv2.FONT_HERSHEY_SIMPLEX
-    fontScale = 0.5
-    org = (10, 30)  # Coordinates for the top-left corner
-    fontColor = (0, 255, 0)
-    backgroundColor = (0, 0, 255)  # Red background color
-    padding = 5
-    lineType = 2  # Thickness of the line
+    font_scale = 0.5
+    org = (10, 30)
+    font_color = (0, 255, 0)
+    line_type = 2
+    line_spacing = 20
 
     y = org[1]
     for key, value in msg.items():
         line = f"{key}: {value}"
-        cv2.putText(img, line, (org[0], y), font, fontScale, fontColor, lineType)
-        y += 20  # Adjust this value to control the spacing between lines
+        cv2.putText(img, line, (org[0], y), font, font_scale, font_color, line_type)
+        y += line_spacing
+
+    if additional_text:
+        cv2.putText(
+            img,
+            additional_text,
+            (org[0], y + line_spacing),
+            font,
+            font_scale,
+            font_color,
+            line_type
+        )
 
     return img
-
 
 def calculate_distance(point1, point2):
     """Calculate the Euclidean distance between two points."""
     return np.linalg.norm(np.array(point1) - np.array(point2))
 
-
 def draw_skeleton(img, ref_frame_kpts, webcam_kpts_list=None):
     """Draw a semi-transparent grey skeleton based on keypoints."""
     overlay = img.copy()
-    line_color = (128, 128, 128)  # Grey in BGR
+    line_color = (128, 128, 128)
     line_thickness = 60
     height, width = img.shape[:2]
     keypoints_dict = {
@@ -174,7 +173,6 @@ def draw_skeleton(img, ref_frame_kpts, webcam_kpts_list=None):
         circle_coordinates = []
         circle_colors = []
 
-        # Scale reference keypoints and compare with webcam keypoints
         for ref_kpt in ref_frame_kpts:
             if ref_kpt["visibility"] > 0.5:
                 kpt_id = ref_kpt["kpt_id"]
@@ -182,7 +180,6 @@ def draw_skeleton(img, ref_frame_kpts, webcam_kpts_list=None):
                 ref_abs_coords = (ref_x, ref_y)
                 ref_kpt["ref_abs_coords"] = ref_abs_coords
 
-                # Find corresponding webcam keypoint
                 webcam_kpt = next(
                     (kpt for kpt in webcam_kpts_list if kpt["kpt_id"] == kpt_id), None
                 )
@@ -192,32 +189,26 @@ def draw_skeleton(img, ref_frame_kpts, webcam_kpts_list=None):
                     )
                     webcam_abs_coords = (webcam_x, webcam_y)
 
-                    # Calculate distance
-                    abs_distance = calculate_distance(ref_abs_coords, webcam_abs_coords)
+                    pixel_distance = calculate_distance(ref_abs_coords, webcam_abs_coords)
+                    normalized_distance = pixel_distance / width
                     ref_kpt["webcam_coords"] = webcam_abs_coords
-                    ref_kpt["abs_distance"] = abs_distance
+                    ref_kpt["abs_distance"] = normalized_distance
 
-                    # Color based on distance threshold (80 pixels)
-                    if abs_distance <= 80:
+                    if pixel_distance <= 80:
                         circle_coordinates.append(ref_abs_coords)
-                        circle_colors.append((0, 255, 0))  # Green for correct posture
+                        circle_colors.append((0, 255, 0))
                     else:
                         circle_coordinates.append(ref_abs_coords)
-                        circle_colors.append((0, 0, 255))  # Red for incorrect posture
+                        circle_colors.append((0, 0, 255))
                 else:
-                    # If no webcam keypoint or visibility too low, draw red dot
                     circle_coordinates.append(ref_abs_coords)
-                    circle_colors.append(
-                        (0, 0, 255)
-                    )  # Red for missing/undetected keypoint
+                    circle_colors.append((0, 0, 255))
                     ref_kpt["webcam_abs_coords"] = None
-                    ref_kpt["abs_distance"] = float("inf")  # Indicate no match
+                    ref_kpt["abs_distance"] = float("inf")
 
-        # Draw circles for feedback
         for coord, color in zip(circle_coordinates, circle_colors):
             cv2.circle(img, coord, 15, color, -1)
 
-        # Draw color indicators legend
         color_mapping = {
             (128, 128, 128): "Reference motion",
             (0, 255, 0): "Correct joint posture",
@@ -226,9 +217,8 @@ def draw_skeleton(img, ref_frame_kpts, webcam_kpts_list=None):
         indicator_size = 30
         text_offset = 10
         x_start = 20
-        y_start = img.shape[0] - 120  # Bottom left corner
+        y_start = img.shape[0] - 120
 
-        # Background rectangle for legend
         cv2.rectangle(
             img,
             (10, y_start - 10),
@@ -237,7 +227,6 @@ def draw_skeleton(img, ref_frame_kpts, webcam_kpts_list=None):
             -1,
         )
 
-        # Draw legend items
         for idx, (color, label) in enumerate(color_mapping.items()):
             cv2.rectangle(
                 img,
@@ -264,12 +253,6 @@ def draw_skeleton(img, ref_frame_kpts, webcam_kpts_list=None):
             )
     return img
 
-
-def calculate_distance(point1, point2):
-    """Calculate the Euclidean distance between two points."""
-    return np.linalg.norm(np.array(point1) - np.array(point2))
-
-
 def calculate_angle(a, b, c):
     """Calculate the angle in degrees at point b formed by points a-b-c."""
     if a is None or b is None or c is None:
@@ -288,11 +271,9 @@ def calculate_angle(a, b, c):
     except (ValueError, ZeroDivisionError):
         return None
 
-
 def is_valid_point(point):
     """Check if a point is valid (not None and has valid coordinates)."""
     return point is not None
-
 
 def draw_text_with_outline(img, text, position, font_scale, thickness):
     """Draw text with a black outline and white fill."""
@@ -342,14 +323,12 @@ def draw_text_with_outline(img, text, position, font_scale, thickness):
         thickness,
     )
 
-
 def draw_interior_sector(img, center, pt_a, pt_b, side=None):
     """Draw a filled sector for the interior angle."""
     radius = 30
-    arc_color = (0, 127, 255)  # Orange outline
-    sector_color = (0, 127, 255)  # Orange fill
+    arc_color = (0, 127, 255)
+    sector_color = (0, 127, 255)
 
-    # Calculate angles from the center to pt_a and pt_b relative to the x-axis
     def calculate_clockwise_angle_from_x_axis(center, pt):
         dx = pt[0] - center[0]
         dy = pt[1] - center[1]
@@ -359,7 +338,6 @@ def draw_interior_sector(img, center, pt_a, pt_b, side=None):
     angle_a = calculate_clockwise_angle_from_x_axis(center, pt_a)
     angle_b = calculate_clockwise_angle_from_x_axis(center, pt_b)
 
-    # Determine start and end angles for the smaller interior angle
     if angle_b < angle_a:
         angle_a, angle_b = angle_b, angle_a
     if angle_b - angle_a < 180:
@@ -369,7 +347,6 @@ def draw_interior_sector(img, center, pt_a, pt_b, side=None):
         start_angle = angle_b
         end_angle = 360 - (angle_b - angle_a)
 
-    # Draw the arc and filled sector
     transparency = 0.4
     original_img = img.copy()
     cv2.ellipse(
@@ -380,11 +357,9 @@ def draw_interior_sector(img, center, pt_a, pt_b, side=None):
 
 def draw_angles(img, keypoints, width, height):
     """Draw angles for key joints on the image."""
-    # Convert keypoints list to dictionary for easier access
     kpts_dict = {kpt["kpt_id"]: (int(kpt["x"] * width), int(kpt["y"] * height))
                  for kpt in keypoints if kpt["visibility"] > 0.5}
 
-    # Define keypoint mappings (MediaPipe equivalents to Lightweight OpenPose)
     def get_point(kpt_id):
         return kpts_dict.get(kpt_id, None)
 
@@ -394,7 +369,7 @@ def draw_angles(img, keypoints, width, height):
     LShoulder = get_point(PoseLandmark.LEFT_SHOULDER)
     LElbow = get_point(PoseLandmark.LEFT_ELBOW)
     LWrist = get_point(PoseLandmark.LEFT_WRIST)
-    Neck = get_point(PoseLandmark.NOSE)  # Approximate neck with nose
+    Neck = get_point(PoseLandmark.NOSE)
     RHip = get_point(PoseLandmark.RIGHT_HIP)
     RAnkle = get_point(PoseLandmark.RIGHT_ANKLE)
     LHip = get_point(PoseLandmark.LEFT_HIP)
@@ -402,7 +377,6 @@ def draw_angles(img, keypoints, width, height):
     LKnee = get_point(PoseLandmark.LEFT_KNEE)
     RKnee = get_point(PoseLandmark.RIGHT_KNEE)
 
-    # Calculate angles
     r_arm_angle = calculate_angle(RShoulder, RElbow, RWrist)
     l_arm_angle = calculate_angle(LShoulder, LElbow, LWrist)
     r_shoulder_angle = calculate_angle(LShoulder, RShoulder, RElbow)
@@ -412,7 +386,6 @@ def draw_angles(img, keypoints, width, height):
     l_knee_angle = calculate_angle(LHip, LKnee, LAnkle)
     r_knee_angle = calculate_angle(RHip, RKnee, RAnkle)
 
-    # Calculate font scales based on distances
     font_scale_r_arm = min(max(calculate_distance(RElbow, RWrist) / 100, 0.5), 0.5) if RElbow and RWrist else 0.5
     font_scale_l_arm = min(max(calculate_distance(LElbow, LWrist) / 100, 0.5), 0.5) if LElbow and LWrist else 0.5
     font_scale_r_shoulder = min(max(calculate_distance(RShoulder, RElbow) / 100, 0.5), 0.5) if RShoulder and RElbow else 0.5
@@ -420,7 +393,6 @@ def draw_angles(img, keypoints, width, height):
     font_scale_r_hip = min(max(calculate_distance(RHip, RAnkle) / 100, 0.5), 0.5) if RHip and RAnkle else 0.5
     font_scale_l_hip = min(max(calculate_distance(LHip, LAnkle) / 100, 0.5), 0.5) if LHip and LAnkle else 0.5
 
-    # Draw angles
     if is_valid_point(RShoulder) and is_valid_point(RElbow) and is_valid_point(RWrist) and r_arm_angle:
         draw_interior_sector(img, RElbow, RShoulder, RWrist, "right")
         draw_text_with_outline(img, f"{r_arm_angle:.1f}", RElbow, font_scale_r_arm, 1)

@@ -13,7 +13,7 @@ from pose import (
     console_log,
     draw_skeleton,
     draw_angles,
-)  # Import your new functions
+)
 import shutil
 import psutil
 import time
@@ -25,19 +25,21 @@ import customtkinter
 EXPORTS_DIR = "detection/exports"
 os.makedirs(EXPORTS_DIR, exist_ok=True)
 
-# Initialize MediaPipe Pose
 mp_drawing = mp.solutions.drawing_utils
 mp_pose = mp.solutions.pose
 
+selected_video_path = None
+file_path = None
+base_name = None
+pose_model = None
+result_label = None
 
-## UI functions
 def open_file_dialog():
     root = tk.Tk()
     root.withdraw()
     selected_video_path = filedialog.askopenfilename(title="Choose a video file")
     root.destroy()
     return selected_video_path
-
 
 def btn_import_video():
     print("button pressed: Import video...")
@@ -46,11 +48,9 @@ def btn_import_video():
     print("selected video path:", selected_video_path)
     run_video_tracking()
 
-
 def run_video_tracking():
     print("demo run_video_tracking...")
     process_video(selected_video_path)
-    ## Go back to the customTkinter window, add a button with text "Are you ready?"
     button_ready_for_realtime = customtkinter.CTkButton(
         app,
         text="Are you ready?",
@@ -60,28 +60,96 @@ def run_video_tracking():
     )
     button_ready_for_realtime.grid(row=2, column=0, padx=0, pady=(20, 10))
 
+def calculate_distance_statistics(data):
+    abs_distances = [
+        item["abs_distance"]
+        for sublist in data
+        for item in sublist
+        if isinstance(item, dict) and item.get("abs_distance") is not None and item["abs_distance"] != float("inf")
+    ]
+    if not abs_distances:
+        return 0, 0, 0, 0, 0
+    max_distance = np.max(abs_distances)
+    min_distance = np.min(abs_distances)
+    mean_distance = np.mean(abs_distances)
+    median_distance = np.median(abs_distances)
+    std_distance = np.std(abs_distances)
+    return max_distance, min_distance, mean_distance, median_distance, std_distance
 
-def run_realtime_tracking():
+def calculate_rms_metrics(matching_kpts_report, base_name):
+    """Calculate RMS metrics and matching quality from process_webcam's matching_kpts_report."""
+    max_distance, min_distance, mean_distance, median_distance, std_distance = (
+        calculate_distance_statistics([matching_kpts_report])
+    )
+
+    individual_rms = [
+        kpt.get("abs_distance", 0)
+        for kpt in matching_kpts_report
+        if isinstance(kpt, dict) and kpt.get("abs_distance") is not None and kpt["abs_distance"] != float("inf")
+    ]
+    overall_rms = np.mean(individual_rms) if individual_rms else 0
+
+    threshold = 80 / 1280  # Normalized equivalent of 80 pixels
+    low_rms_count = sum(1 for rms in individual_rms if rms <= threshold)
+    total_keypoints = len(individual_rms)
+    percentage_low_rms = (
+        (low_rms_count / total_keypoints) * 100 if total_keypoints > 0 else 0
+    )
+
+    if percentage_low_rms > 80:
+        matching_quality = "Perfect matching"
+    elif 50 <= percentage_low_rms <= 80:
+        matching_quality = "Good matching"
+    elif 30 <= percentage_low_rms < 50:
+        matching_quality = "Not matching enough"
+    else:
+        matching_quality = "Poor matching"
+
+    overall_rms_threshold = 40 / 1280  # Normalized equivalent of 40 pixels
+    if overall_rms <= overall_rms_threshold:
+        overall_quality = "Overall perfect"
+    elif (60 / 1280) > overall_rms > overall_rms_threshold:
+        overall_quality = "Overall not bad"
+    else:
+        overall_quality = "Overall poor"
+
+    print(
+        f"Webcam RMS Metrics - Percentage Low RMS: {percentage_low_rms:.2f}%, "
+        f"Overall RMS: {overall_rms:.6f}, Matching Quality: {matching_quality}, "
+        f"Overall Quality: {overall_quality}, Total Keypoints: {total_keypoints}"
+    )
+
+    return {
+        "max_distance": max_distance,
+        "min_distance": min_distance,
+        "mean_distance": mean_distance,
+        "median_distance": median_distance,
+        "std_distance": std_distance,
+        "overall_rms": overall_rms,
+        "percentage_low_rms": percentage_low_rms,
+        "matching_quality": matching_quality,
+        "overall_quality": overall_quality,
+    }
+
+def run_realtime_tracking(camera_id=0):
     print("demo run_realtime_tracking...")
-    # run_pose_init()
-    # process_webcam(file_path)
-
-    if not run_pose_init(file_path, base_name):
+    global result_label
+    if not run_pose_init(file_path, camera_id):
         print("Pose initialization failed. Aborting webcam processing.")
         return
+    process_webcam(file_path, base_name, camera_id)
 
-    process_webcam(file_path)
-
-def run_pose_init(file_path, base_name):
+def run_pose_init(file_path, camera_id=0):
     print("demo run_pose_init...")
     global pose_model
+    visibility_threshold = 0.8
     pose_model = mp_pose.Pose(
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
+        min_detection_confidence=visibility_threshold,
+        min_tracking_confidence=visibility_threshold,
         model_complexity=1,
         smooth_landmarks=True,
     )
-    cap = cv2.VideoCapture(1)  # Match process_webcam camera_id
+    cap = cv2.VideoCapture(camera_id)
     if not cap.isOpened():
         print("Error: Cannot access webcam.")
         return False
@@ -92,18 +160,20 @@ def run_pose_init(file_path, base_name):
         print("Error: Reference JSON is empty.")
         cap.release()
         return False
-    init_keypoints = ref_list[0]["keypoints"]  # First frame's keypoints
+    init_keypoints = ref_list[0]["keypoints"]
 
-    pose_init_duration = 20  # 20 seconds
-    keypoint_threshold = 0.05  # Normalized distance threshold
+    pose_init_duration = 20
+    pixel_threshold = 80
+    visibility_threshold = 0.8
     init_time = time.time()
     continue_init = True
     frame_id = 0
     fps_time = time.time()
 
     with mp_pose.Pose(
-            min_detection_confidence=0.5, min_tracking_confidence=0.5
-        ) as pose:
+        min_detection_confidence=visibility_threshold,
+        min_tracking_confidence=visibility_threshold,
+    ) as pose:
         while continue_init:
             success, frame = cap.read()
             if not success:
@@ -133,8 +203,12 @@ def run_pose_init(file_path, base_name):
                     img_with_skeleton,
                     results.pose_landmarks,
                     mp_pose.POSE_CONNECTIONS,
-                    mp_drawing.DrawingSpec(color=(245, 117, 66), thickness=2, circle_radius=2),
-                    mp_drawing.DrawingSpec(color=(245, 66, 230), thickness=2, circle_radius=2),
+                    mp_drawing.DrawingSpec(
+                        color=(245, 117, 66), thickness=2, circle_radius=2
+                    ),
+                    mp_drawing.DrawingSpec(
+                        color=(245, 66, 230), thickness=2, circle_radius=2
+                    ),
                 )
 
                 bbox = results.pose_landmarks.landmark
@@ -150,15 +224,46 @@ def run_pose_init(file_path, base_name):
                     2,
                 )
 
-                img_with_skeleton = draw_angles(img_with_skeleton, webcam_keypoints, frame_width, frame_height)
-                img_with_skeleton = draw_skeleton(img_with_skeleton, init_keypoints, webcam_keypoints)
+                img_with_skeleton = draw_angles(
+                    img_with_skeleton, webcam_keypoints, frame_width, frame_height
+                )
+                img_with_skeleton = draw_skeleton(
+                    img_with_skeleton, init_keypoints, webcam_keypoints
+                )
 
                 matched_count = 0
-                total_keypoints = len(init_keypoints)
+                total_keypoints = sum(
+                    1
+                    for kpt in init_keypoints
+                    if kpt.get("visibility", 0) > visibility_threshold
+                )
+                distances = []
                 for ref_kpt, web_kpt in zip(init_keypoints, webcam_keypoints):
-                    if "abs_distance" in ref_kpt and ref_kpt["abs_distance"] < keypoint_threshold:
-                        matched_count += 1
+                    if (
+                        ref_kpt.get("visibility", 0) > visibility_threshold
+                        and web_kpt.get("visibility", 0) > visibility_threshold
+                    ):
+                        ref_x, ref_y = (
+                            ref_kpt["x"] * frame_width,
+                            ref_kpt["y"] * frame_height,
+                        )
+                        web_x, web_y = (
+                            web_kpt["x"] * frame_width,
+                            web_kpt["y"] * frame_height,
+                        )
+                        abs_distance = (
+                            (ref_x - web_x) ** 2 + (ref_y - web_y) ** 2
+                        ) ** 0.5
+                        distances.append(abs_distance)
+                        if abs_distance <= pixel_threshold:
+                            matched_count += 1
+                    else:
+                        distances.append(None)
                 all_keypoints_matched = matched_count == total_keypoints
+                print(
+                    f"Init Frame {frame_id} - Matched keypoints: {matched_count}/{total_keypoints}, "
+                    f"Distances: {[round(d, 2) if d is not None else 'N/A' for d in distances[:5]]}"
+                )
 
             elapsed_time = current_time - init_time
             countdown = max(0, pose_init_duration - int(elapsed_time))
@@ -171,47 +276,23 @@ def run_pose_init(file_path, base_name):
                 (255, 255, 255),
                 5,
             )
-            
-            # status_text = "Match!" if all_keypoints_matched else "Align pose"
-            # status_color = (0, 255, 0) if all_keypoints_matched else (0, 0, 255)
-            # cv2.putText(
-            #     img_with_skeleton,
-            #     status_text,
-            #     (50, 50),
-            #     cv2.FONT_HERSHEY_SIMPLEX,
-            #     1,
-            #     status_color,
-            #     2,
-            # )
-
-            # console_log(
-            #     img_with_skeleton,
-            #     {
-            #         "filename": "webcam",
-            #         "frame_id": frame_id,
-            #         "resolution": resolution,
-            #         "frame_time": current_time,
-            #         "fps": fps,
-            #         "cpu_load": psutil.cpu_percent(),
-            #         "ref_video": base_name,
-            #     },
-            # )
 
             cv2.imshow("Pose Init", img_with_skeleton)
 
             key = cv2.waitKey(1)
-            if key == 27 or all_keypoints_matched:  # Esc or all keypoints matched
+            if key == 27 or all_keypoints_matched:
                 cv2.destroyAllWindows()
                 cap.release()
                 return True
 
             if elapsed_time >= pose_init_duration and not all_keypoints_matched:
                 cv2.destroyAllWindows()
+
                 def create_modal():
                     modal = customtkinter.CTkToplevel()
                     modal.geometry("400x200")
                     modal.title("Pose Initialization Timeout")
-                    modal.attributes('-topmost', True)
+                    modal.attributes("-topmost", True)
 
                     label = customtkinter.CTkLabel(
                         modal,
@@ -263,11 +344,7 @@ def run_pose_init(file_path, base_name):
         cap.release()
         return False
 
-
 def generate_filename(base_name):
-    """Generate a unique filename based on the base name and current timestamp."""
-    # timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    # return os.path.join(EXPORTS_DIR, f"{base_name}_{timestamp}.json")
     current_datetime = datetime.datetime.now().strftime("%Y%m%d_%H-%M-%S")
     try:
         filename = os.path.basename(base_name)
@@ -281,77 +358,57 @@ def generate_filename(base_name):
         shutil.rmtree(f"{export_path}")
         os.makedirs(f"{export_path}")
 
-    ## Create a JSON file to store the motion-tracking keypoints list
     os.path.join(export_path, "tracking_frame_report.json")
-
-    ## Create a json file to store the summary report
     os.path.join(export_path, "summary_report.json")
 
     return export_path
 
-
-def process_webcam(file_path = None, camera_id=1):
-    """Process webcam video feed."""
-    # Start webcam with id 0 or 1 or 2
+def process_webcam(file_path=None, base_name=None, camera_id=1):
+    global result_label
     cap = cv2.VideoCapture(camera_id)
     tracking_frame_report = []
-    matching_kpts_report = []  # Store keypoints with distance info
-    summary_report = []
+    matching_kpts_report = []
+    match_percentages = []
     frame_id = 0
     fps_time = 0
 
     ref_list = []
     ref_keypoints = []
+    visibility_threshold = 0.8
 
     start_time = time.time()
-    ## Load the JSON data from the file
-    # base_name = os.path.splitext(os.path.basename(selected_video_path))[
-    #     0
-    # ]  # Get the base name of the video file
-    
-    with open(f"{file_path}tracking_frame_report.json", "r") as file:
+    with open(f"{file_path}/tracking_frame_report.json", "r") as file:
         ref_list = json.load(file)
-    
-    # with open("detection/tracking_frame_report_video-2.json", "r") as file:
-    #     ref_list = json.load(file)
-    
-    print("Start processing...")
+
+    print("Start webcam processing...")
 
     with mp_pose.Pose(
-        min_detection_confidence=0.5, min_tracking_confidence=0.5
+        min_detection_confidence=visibility_threshold, min_tracking_confidence=visibility_threshold
     ) as pose:
         while cap.isOpened():
             success, frame = cap.read()
             if not success:
                 print("Ignoring empty camera frame.")
                 continue
-            
+
             if frame_id > ref_list[-1]["frame_id"]:
                 print("End of reference video.")
                 break
 
-            # Recolor the image
             image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             image.flags.writeable = False
-            # Make detection
             results = pose.process(image)
-            # Recolor back to BGR
             image.flags.writeable = True
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-            ## Get the resolution of the captured image
             frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             resolution = [frame_width, frame_height]
 
-            ## Calculate the fps
             current_time = time.time()
             fps = round(1.0 / (current_time - fps_time), 2)
-
-            ## Access the CPU usage
             current_cpu_load = psutil.cpu_percent()
 
-            # Extract landmarks
             webcam_keypoints = extract_keypoints(results, frame_id)
             tracking_frame_report.append(
                 {
@@ -361,12 +418,10 @@ def process_webcam(file_path = None, camera_id=1):
                     "cpu_load": current_cpu_load,
                     "resolution": resolution,
                     "keypoints": webcam_keypoints,
+                    "frame_time": current_time,
                 }
-            )  # Store the object
+            )
 
-            # Default to the original image
-
-            # Render detections
             if results.pose_landmarks:
                 mp_drawing.draw_landmarks(
                     image,
@@ -382,7 +437,6 @@ def process_webcam(file_path = None, camera_id=1):
 
                 img_with_skeleton = image.copy()
 
-                # Draw bounding box (migrated from Lightweight OpenPose)
                 bbox = results.pose_landmarks.landmark
                 x_min = min([lm.x for lm in bbox]) * frame_width
                 y_min = min([lm.y for lm in bbox]) * frame_height
@@ -395,25 +449,40 @@ def process_webcam(file_path = None, camera_id=1):
                     (0, 255, 0),
                     2,
                 )
-                
-                # Draw angles on webcam keypoints
-                img_with_skeleton = draw_angles(img_with_skeleton, webcam_keypoints, frame_width, frame_height)
 
-                ## Draw the skeleton
+                img_with_skeleton = draw_angles(
+                    img_with_skeleton, webcam_keypoints, frame_width, frame_height
+                )
+
                 if frame_id < len(ref_list):
                     ref_keypoints = ref_list[frame_id]["keypoints"]
                 else:
                     ref_keypoints = ref_list[frame_id % len(ref_list)]["keypoints"]
 
+                matched_count = 0
+                total_keypoints = sum(1 for kpt in ref_keypoints if kpt.get("visibility", 0) > visibility_threshold)
+                frame_matching_kpts = []
+
                 if ref_keypoints:
                     img_with_skeleton = draw_skeleton(
                         img_with_skeleton, ref_keypoints, webcam_keypoints
                     )
-                    # Store keypoints with distance info
                     for kpt in ref_keypoints:
-                        if "abs_distance" in kpt:
-                            matching_kpts_report.append(kpt)
+                        if "abs_distance" in kpt and kpt["abs_distance"] is not None and kpt["abs_distance"] != float("inf"):
+                            frame_matching_kpts.append(kpt)
+                            if kpt["abs_distance"] <= 80 / frame_width:
+                                matched_count += 1
 
+                    matching_kpts_report.extend(frame_matching_kpts)
+
+                match_percentage = (matched_count / total_keypoints * 100) if total_keypoints > 0 else 0
+                match_percentages.append(match_percentage)
+                print(
+                    f"Webcam Frame {frame_id} - Matched keypoints: {matched_count}/{total_keypoints}, "
+                    f"Match Percentage: {match_percentage:.2f}%"
+                )
+                
+                overall_score = int(np.round(np.mean(match_percentages))) if match_percentages else 0
                 console_log(
                     img_with_skeleton,
                     {
@@ -423,68 +492,99 @@ def process_webcam(file_path = None, camera_id=1):
                         "frame_time": current_time,
                         "fps": fps,
                         "cpu_load": current_cpu_load,
-                        "ref_video": ref_list[0]["filename"]
+                        "ref_video": base_name or ref_list[0]["filename"],
+                        "match_percentage": f"{match_percentage:.2f}%",
                     },
+                    additional_text=f"Overall Score: {overall_score}"
                 )
 
                 cv2.imshow("MediaPipe Pose - Webcam", img_with_skeleton)
-                if cv2.waitKey(5) & 0xFF == 27:  # Press 'Esc' to exit
+                if cv2.waitKey(5) & 0xFF == 27:
                     break
 
             frame_id += 1
-            fps_time = time.time()
+            fps_time = current_time
 
     total_time = time.time() - start_time
-    print(f"Total processing time: {total_time:.2f} seconds")
+    overall_score = np.mean(match_percentages) if match_percentages else 0
+    print(f"Total webcam processing time: {total_time:.2f} seconds")
+    print(f"Overall Score: {overall_score}")
 
-    # Save keypoints to JSON file before exiting
-    file_path = generate_filename("webcam_" + ref_list[0]["filename"])
-    save_keypoints_to_json(
-        tracking_frame_report, f"{file_path}/tracking_frame_report.json"
-    )
-    save_keypoints_to_json(
-        matching_kpts_report, f"{file_path}/matching_kpts_report.json"
+    rms_metrics = calculate_rms_metrics(matching_kpts_report, base_name)
+
+    if result_label is None:
+        result_label = customtkinter.CTkLabel(
+            app,
+            text="",
+            font=("Arial", 14),
+            fg_color="transparent",
+        )
+        result_label.grid(row=3, column=0, padx=0, pady=(10, 20))
+    result_label.configure(
+        text=f"Matching Quality: {rms_metrics['matching_quality']}\n"
+             f"Overall RMS Quality: {rms_metrics['overall_quality']}\n"
+             f"Overall Score: {int(overall_score)}"
     )
 
-    avg_fps = sum([frame["fps"] for frame in tracking_frame_report]) / len(
-        tracking_frame_report
+    webcam_file_path = generate_filename(
+        "webcam_" + (base_name or ref_list[0]["filename"])
     )
-    avg_cpu_load = sum([frame["cpu_load"] for frame in tracking_frame_report]) / len(
-        tracking_frame_report
+    save_keypoints_to_json(
+        tracking_frame_report, f"{webcam_file_path}/tracking_frame_report.json"
+    )
+    save_keypoints_to_json(
+        matching_kpts_report, f"{webcam_file_path}/matching_kpts_report.json"
+    )
+
+    avg_fps = (
+        sum([frame["fps"] for frame in tracking_frame_report])
+        / len(tracking_frame_report)
+        if tracking_frame_report
+        else 0
+    )
+    avg_cpu_load = (
+        sum([frame["cpu_load"] for frame in tracking_frame_report])
+        / len(tracking_frame_report)
+        if tracking_frame_report
+        else 0
     )
 
     summary_report = {
+        "datetime": datetime.datetime.now().strftime("%d-%m-%Y_%H-%M-%S"),
+        "filename": "webcam",
         "total_frames": frame_id,
         "total_time": total_time,
         "avg_fps": avg_fps,
         "avg_cpu_load": avg_cpu_load,
-        "ref_video": ref_list[0]["filename"]
+        "ref_video": base_name or ref_list[0]["filename"],
+        "overall_score": overall_score,
+        **rms_metrics,
     }
 
-    save_summart_report_to_json(summary_report, f"{file_path}/summary_report.json")
+    save_summart_report_to_json(
+        summary_report, f"{webcam_file_path}/summary_report.json"
+    )
 
     cap.release()
     cv2.destroyAllWindows()
-
+    return tracking_frame_report, matching_kpts_report
 
 def process_video(video_path):
-    """Process video file."""
     global file_path, base_name
     cap = cv2.VideoCapture(video_path)
     keypoints_list = []
-    base_name = os.path.splitext(os.path.basename(video_path))[
-        0
-    ]  # Get the base name of the video file
+    base_name = os.path.splitext(os.path.basename(video_path))[0]
     frame_id = 0
     fps_time = 0
     tracking_frame_report = []
     summary_report = []
+    visibility_threshold = 0.8
 
     start_time = time.time()
-    print("Start processing...")
+    print("Start processing video...")
 
     with mp_pose.Pose(
-        min_detection_confidence=0.5, min_tracking_confidence=0.5
+        min_detection_confidence=visibility_threshold, min_tracking_confidence=visibility_threshold
     ) as pose:
         while cap.isOpened():
             success, frame = cap.read()
@@ -492,28 +592,20 @@ def process_video(video_path):
                 print("End of video.")
                 break
 
-            # Process the frame
             image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             image.flags.writeable = False
             results = pose.process(image)
             image.flags.writeable = True
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-            ## Get the resolution of the captured image
             frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             resolution = [frame_width, frame_height]
-            
-            
 
-            ## Calculate the fps
             current_time = time.time()
             fps = round(1.0 / (current_time - fps_time), 2)
-
-            ## Access the CPU usage
             current_cpu_load = psutil.cpu_percent()
 
-            # Extract landmarks
             keypoints = extract_keypoints(results, frame_id)
             tracking_frame_report.append(
                 {
@@ -524,9 +616,8 @@ def process_video(video_path):
                     "resolution": resolution,
                     "keypoints": keypoints,
                 }
-            )  # Store the object
+            )
 
-            # Draw landmarks
             if results.pose_landmarks:
                 mp_drawing.draw_landmarks(
                     image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS
@@ -535,7 +626,7 @@ def process_video(video_path):
                 console_log(
                     image,
                     {
-                        "filename": "webcam",
+                        "filename": base_name,
                         "frame_id": frame_id,
                         "resolution": resolution,
                         "frame_time": current_time,
@@ -543,8 +634,7 @@ def process_video(video_path):
                         "cpu_load": current_cpu_load,
                     },
                 )
-                
-                # Draw bounding box (migrated from Lightweight OpenPose)
+
                 bbox = results.pose_landmarks.landmark
                 x_min = min([lm.x for lm in bbox]) * frame_width
                 y_min = min([lm.y for lm in bbox]) * frame_height
@@ -557,21 +647,19 @@ def process_video(video_path):
                     (0, 255, 0),
                     2,
                 )
-                
-                # Draw angles on webcam keypoints
+
                 image = draw_angles(image, keypoints, frame_width, frame_height)
 
             cv2.imshow("MediaPipe Pose - Video", image)
-            if cv2.waitKey(5) & 0xFF == 27:  # Press 'Esc' to exit
+            if cv2.waitKey(5) & 0xFF == 27:
                 break
 
             frame_id += 1
             fps_time = time.time()
 
     total_time = time.time() - start_time
-    print(f"Total processing time: {total_time:.2f} seconds")
+    print(f"Total video processing time: {total_time:.2f} seconds")
 
-    # Save keypoints to JSON file before exiting
     file_path = generate_filename(base_name)
     save_keypoints_to_json(
         tracking_frame_report, f"{file_path}/tracking_frame_report.json"
@@ -596,28 +684,24 @@ def process_video(video_path):
     cap.release()
     cv2.destroyAllWindows()
 
-
 def process_image(image_path):
-    """Process a single image."""
     image = cv2.imread(image_path)
+    visibility_threshold = 0.8
     with mp_pose.Pose(
-        min_detection_confidence=0.5, min_tracking_confidence=0.5
+        min_detection_confidence=visibility_threshold, min_tracking_confidence=visibility_threshold
     ) as pose:
-        # Convert the BGR image to RGB
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         results = pose.process(image_rgb)
 
-        # Draw landmarks
         if results.pose_landmarks:
             mp_drawing.draw_landmarks(
                 image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS
             )
 
         cv2.imshow("MediaPipe Pose - Image", image)
-        cv2.waitKey(0)  # Press any key to close the window
+        cv2.waitKey(0)
 
     cv2.destroyAllWindows()
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MediaPipe Pose Estimation Demo")
@@ -644,19 +728,17 @@ if __name__ == "__main__":
         "--reference-video-json",
         type=str,
         default="detection/temp_report/tracking_frame_report_video-1.json",
-        help="reference video JSON tracking report for realtime tracking (default: detection/temp_report/tracking_frame_report_video-2.json)",
+        help="reference video JSON tracking report for realtime tracking",
     )
 
     args = parser.parse_args()
 
     if args.demo == 1:
         print("demo mode is on")
-
-        ## Init the customTkinter window
         customtkinter.set_appearance_mode("light")
         app = customtkinter.CTk()
         app.geometry("1080x607")
-        app.title("Lightweight OpenPose Demo")
+        app.title("MediaPipe Demo")
 
         label = customtkinter.CTkLabel(
             app,
